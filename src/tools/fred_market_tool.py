@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import requests
 from typing import Optional, List, Dict, Union, Any
 from langchain.agents import Tool
+from prompts import FRED_TOOL_DESCRIPTION
+import logger
 
 def get_fred_market_report(indicators: List[str] = None, 
                            time_period: str = "1y",
@@ -19,6 +21,8 @@ def get_fred_market_report(indicators: List[str] = None,
     Returns:
         Text-only report with market analysis
     """
+    logger.info(f"Generating FRED market report for time period: {time_period}")
+    
     # Use API key from environment if not provided
     api_key = api_key or os.environ.get("FRED_API_KEY")
     
@@ -120,6 +124,7 @@ def get_fred_market_report(indicators: List[str] = None,
         for indicator in category_indicators_to_analyze:
             try:
                 # Get data from FRED
+                logger.debug(f"Fetching FRED data for indicator: {indicator}")
                 series_data = get_series_observations(
                     series_id=indicator,
                     observation_start=observation_start,
@@ -128,6 +133,7 @@ def get_fred_market_report(indicators: List[str] = None,
                 )
                 
                 if not series_data or "observations" not in series_data or not series_data["observations"]:
+                    logger.warning(f"No data available for FRED indicator: {indicator}")
                     report += f"{indicator}: No data available\n\n"
                     continue
                 
@@ -255,6 +261,7 @@ def get_fred_market_report(indicators: List[str] = None,
                 analyzed_indicators.add(indicator)
                 
             except Exception as e:
+                logger.error(f"Error analyzing FRED indicator {indicator}: {str(e)}")
                 report += f"{indicator}: Error retrieving data - {str(e)}\n\n"
     
     # Check for any additional indicators not covered in categories
@@ -302,10 +309,14 @@ def get_fred_market_report(indicators: List[str] = None,
                     report += f"Latest value ({latest_date}): {latest_value}\n\n"
                 
             except Exception as e:
+                logger.error(f"Error analyzing additional FRED indicator {indicator}: {str(e)}")
                 report += f"{indicator}: Error retrieving data - {str(e)}\n\n"
     
     report += "\n" + "=" * 50 + "\n"
     report += "End of report\n"
+    
+    logger.info(f"Completed FRED market report for {time_period} period with {len(analyzed_indicators)} indicators")
+    logger.log_tool_call("FRED Market Analysis", f"time_period={time_period}, indicators={len(indicators)}", "Report generated successfully")
     
     return report
 
@@ -332,7 +343,7 @@ def get_series_observations(series_id, observation_start=None, observation_end=N
     if response.status_code == 200:
         return response.json()
     else:
-        print(f"Error fetching {series_id}: {response.text}")
+        logger.warning(f"Error fetching FRED data for {series_id}: {response.text}")
         return None
 
 def get_series_info(series_id, api_key):
@@ -359,16 +370,11 @@ def get_series_info(series_id, api_key):
     
     return {"title": series_id, "units": "", "frequency": ""}
 
-
-
+# Define the tools at the end of file
 fred_tool = Tool(
-    name="FRED Market Report Tool",
+    name="FRED Market Analysis",
     func=get_fred_market_report,
-    description=(
-        "Use this tool to generate a market report using FRED economic indicators. "
-        "The input should describe a time period like '1y', '6m', etc. "
-        "For example: 'Give me a market report for the past 6 months'."
-    )
+    description=FRED_TOOL_DESCRIPTION
 )
 
 # Example usage

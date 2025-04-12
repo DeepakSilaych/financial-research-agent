@@ -4,6 +4,8 @@ import os
 import json
 from datetime import datetime, timedelta
 from langchain.agents import Tool
+from prompts import COMPANY_ANALYZER_TOOL_DESCRIPTION
+import logger
 
 def analyze_company(symbol, api_key=None):
     """
@@ -16,6 +18,8 @@ def analyze_company(symbol, api_key=None):
     Returns:
         Comprehensive company data as formatted text
     """
+    logger.info(f"Analyzing company data for: {symbol}")
+    
     api_key = api_key or os.environ.get("ALPHA_VANTAGE_API_KEY") or "BAY8O6B5GY36HMB2"
     base_url = "https://www.alphavantage.co/query"
     result_text = f"COMPREHENSIVE ANALYSIS FOR: {symbol}\n{'=' * 50}\n\n"
@@ -52,6 +56,7 @@ def analyze_company(symbol, api_key=None):
                 params.update(data_point["params"])
                 
             # Make API request
+            logger.debug(f"Making request for {data_point['function']} data for {symbol}")
             response = requests.get(base_url, params=params)
             data = response.json()
             
@@ -60,6 +65,7 @@ def analyze_company(symbol, api_key=None):
             
             # Check for errors
             if "Error Message" in data:
+                logger.warning(f"Error in {data_point['function']} data for {symbol}: {data['Error Message']}")
                 result_text += f"\n{data_point['title']}\n{'-' * 30}\n"
                 result_text += f"Error: {data['Error Message']}\n"
                 continue
@@ -276,6 +282,7 @@ def analyze_company(symbol, api_key=None):
                 result_text += json.dumps(data, indent=2) + "\n"
                 
         except Exception as e:
+            logger.error(f"Error retrieving {data_point['function']} for {symbol}: {str(e)}")
             result_text += f"Error retrieving {data_point['function']}: {str(e)}\n"
     
     # Calculate and add financial ratios section
@@ -474,6 +481,7 @@ def analyze_company(symbol, api_key=None):
             pass
     
     except Exception as e:
+        logger.error(f"Error calculating financial ratios for {symbol}: {str(e)}")
         result_text += f"Error calculating financial ratios: {str(e)}\n"
     
     # Add an analysis summary at the end
@@ -482,30 +490,18 @@ def analyze_company(symbol, api_key=None):
     result_text += f"{'=' * 50}\n"
     result_text += "Generated on: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n"
     
+    logger.info(f"Completed company analysis for {symbol}")
+    logger.log_tool_call("Company Analyzer", symbol, f"Analysis for {symbol} completed successfully")
+    
     return result_text
 
+# Define LangChain Tool
 company_analyzer_tool = Tool(
-    name = "company_analyzer",
+    name="Company Analyzer",
     func=analyze_company,
-    description = """
-    Generates a comprehensive analysis report for a publicly traded company.
-    
-    This tool is useful for:
-    1. Analyzing a company's financial performance and health
-    2. Reviewing stock price history and trends
-    3. Examining income statements, balance sheets, and cash flow
-    4. Evaluating key financial ratios and metrics
-    5. Understanding company valuation and profitability
-    6. Tracking earnings history and surprises
-    7. Assessing liquidity, solvency, and efficiency ratios
-    
-    Provide a stock ticker symbol (e.g., 'AAPL' for Apple Inc.) to analyze the company.
-    """
+    description=COMPANY_ANALYZER_TOOL_DESCRIPTION
 )
 
 # Example usage
 if __name__ == "__main__":
-
-    analysis = analyze_company("AAPL")
-    print(analysis)
-    
+    print(analyze_company("AAPL")) 

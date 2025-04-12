@@ -1,1 +1,0 @@
-    tools=[stock_tool],
