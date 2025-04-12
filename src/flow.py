@@ -2,10 +2,14 @@ import os
 from dotenv import load_dotenv
 from langchain.agents import initialize_agent, AgentType
 from langchain_openai import ChatOpenAI
-from tools.stock_info_tool import stock_tool 
+from tools.stock_info_tool import stock_tool
 from tools.news_tool import news_tool 
 from tools.company_analyzer_tool import company_analyzer_tool
 from tools.fred_market_tool import fred_tool
+from tools.stock_info_tool import financial_statements_tool
+from tools.stock_info_tool import historical_performance_tool
+from tools.stock_info_tool import technical_indicators_tool 
+from tools.company_profile_tool import company_profile_tool
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from prompts import MISSING_INFO_CHECKER_PROMPT
@@ -19,7 +23,7 @@ os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 # Set up LangChain agent
 llm = ChatOpenAI(temperature=0)
 agent = initialize_agent(
-    tools=[stock_tool, news_tool, company_analyzer_tool, fred_tool],
+    tools=[stock_tool, news_tool, company_analyzer_tool, fred_tool,company_profile_tool,financial_statements_tool,historical_performance_tool,technical_indicators_tool],
     llm=llm,
     agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
     verbose=True
@@ -101,3 +105,10 @@ def run_agent_loop(agent, query, max_retries=3, user_id=None):
     info(f"Agent loop completed after {iteration+1} iterations")
     log_response(user_id, query, final_response)
     return final_response
+
+if __name__ == "__main__":
+    # Example usage
+    query = "Give me a detailed company profile of Tesla, including its industry, business model, key products/services, market position, leadership, and recent news."
+    user_id = "user_1234"  # Example user ID, can be replaced with actual user ID in production
+    response = run_agent_loop(agent, query, user_id=user_id)
+    print(response)
