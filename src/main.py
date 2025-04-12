@@ -1,10 +1,12 @@
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
-from prompts import SAFETY_CHECKER_PROMPT, METADATA_EXTRACTION_PROMPT
+from prompts import SAFETY_CHECKER_PROMPT, METADATA_AND_QUERY_ENRICHMENT_PROMPT
 from logger import info, warning, error
 from datetime import datetime
 import flow
+import json
+import re
 
 # Load environment variables from .env file
 load_dotenv()
@@ -52,22 +54,52 @@ def check_query_safety(user_input, user_id="anonymous"):
         }
 
 def validate_and_extract_metadata(user_query, user_id="anonymous"):
-    """Extract metadata from a user query"""
+    """
+    Extract metadata from a user query
+    
+    Returns:
+        dict: A dictionary containing:
+            - metadata: JSON metadata as a Python dict
+            - expanded_query: Markdown expanded query as a string
+    """
     info(f"Extracting metadata for query: '{user_query}'")
     
     try:
         response = client.responses.create(
             model="gpt-4-turbo",
-            instructions=METADATA_EXTRACTION_PROMPT,
+            instructions=METADATA_AND_QUERY_ENRICHMENT_PROMPT,
             input= user_query
         )
 
         output = response.output[0].content[0].text
-        info(f"Extracted metadata: {output}")
-        return output
+        info(f"Raw extracted output: {output}")
+        
+        # Extract JSON part (from PART 1: METADATA EXTRACTION)
+        json_match = re.search(r'```json\s*(.*?)\s*```', output, re.DOTALL)
+        metadata = {}
+        if json_match:
+            try:
+                metadata = json.loads(json_match.group(1))
+                info(f"Parsed metadata: {metadata}")
+            except json.JSONDecodeError as e:
+                error(f"Error parsing JSON metadata: {str(e)}")
+        
+        # Extract the expanded query (from PART 2: QUERY EXPANSION)
+        expanded_query = ""
+        if "PART 2: QUERY EXPANSION" in output:
+            expanded_query = output.split("PART 2: QUERY EXPANSION", 1)[1].strip()
+            info(f"Extracted expanded query of length: {len(expanded_query)}")
+        
+        return {
+            "metadata": metadata,
+            "expanded_query": expanded_query
+        }
     except Exception as e:
         error(f"Error extracting metadata: {str(e)}")
-        return "{}"
+        return {
+            "metadata": {},
+            "expanded_query": ""
+        }
 
 def process_query(user_input, user_id=None):
     """Process a user query through the complete workflow"""
@@ -89,27 +121,31 @@ def process_query(user_input, user_id=None):
         }
     
     # 2. Extract metadata
-    refined_query = safety_result["refined_query"]
-    metadata = validate_and_extract_metadata(refined_query, user_id)
+    metadata_result = validate_and_extract_metadata(user_input, user_id)
     
-    # 3. Process through agent workflow
-    agent_response = flow.run_agent_loop(flow.agent, refined_query, max_retries=3, user_id=user_id)
+    # Use the expanded query if available, otherwise use the refined query
+    query_for_agent = metadata_result["expanded_query"] if metadata_result["expanded_query"] else user_input
+    info(f"Using query for agent: '{query_for_agent[:100]}...'")
+    
+    # 3. Process through enhanced agent workflow with the improved arguments
+    agent_response = flow.run_agent_loop(
+        flow.agent, 
+        query=query_for_agent,
+        original_query=user_input,
+        metadata=metadata_result["metadata"],
+        max_retries=5, 
+        user_id=user_id
+    )
     
     return {
         "status": "success",
-        "metadata": metadata,
+        "metadata": metadata_result["metadata"],
+        "expanded_query": query_for_agent,
         "response": agent_response
     }
 
 # Example usage
 if __name__ == "__main__":
-    user_input = "What is the stock price of Apple?"
-    result = process_query(user_input)
-    
-    if result["status"] == "success":
-        print("\nResult:")
-        print(result["response"])
-    else:
-        print(f"\nQuery rejected: {result['reason']}")
-   
-
+    query = "Give me a detailed company profile of Tesla, including its industry, business model, key products/services, market position, leadership, and recent news."
+    result = process_query(query)
+    print(result)

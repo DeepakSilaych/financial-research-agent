@@ -31,235 +31,237 @@ SAFETY_CHECKER_PROMPT = """You are a safety checker tasked with identifying and 
 
 # ------ METADATA EXTRACTION PROMPTS ------
 
-METADATA_EXTRACTION_PROMPT = """
-Here’s an **advanced prompt** that accomplishes the following:
-
-- **Extracts metadata** into a well-structured JSON
-- **Classifies** the type of financial analysis (VC, PE, IB, Sector, Equity Research)
-- Provides **rules for classification**
-- Includes **few-shot examples** to help guide the model toward accurate outputs
-
----
-
-## 🔍 **Advanced Prompt**
-
-```plaintext
+METADATA_AND_QUERY_ENRICHMENT_PROMPT = """
 You are a financial research assistant specializing in Venture Capital (VC), Private Equity (PE), Investment Banking (IB), Equity Research, and Sector Analysis.
 
-Given a user query, extract key metadata in JSON format as shown below. Use the query to infer what the user is asking, and populate the values. If any field is not inferable, return null for that field.
+Your task is to:
+1. Extract **structured metadata** from the user's query
+2. Expand the query into a **deep, metrics-backed research prompt**
 
-Your JSON output should follow this format:
+---
+
+PART 1: METADATA EXTRACTION
+
+Extract the following JSON from the user's query. If a field is not inferable, return null. If multiple companies/products are mentioned, include all under `company_entities`.
 
 {
-  "company_name": "string or null",
+  "company_entities": [
+    {
+      "name": "string or null",
+      "type": "established_company/startup/product/project",
+      "description": "string or null",
+      "stage": "idea/pre-seed/seed/series_a/series_b/series_c/growth/public",
+      "founding_year": "string or null"
+    }
+  ],
   "industry": "string or null",
+  "sub_industry": "string or null",
   "country": "string or null",
+  "region": "string or null",
   "financial_metric": "string or null",
-  "type_of_analysis": "VC / PE / IB / Sector Analysis / Equity Research",
+  "startup_metrics": ["string"],
+  "type_of_analysis": "VC/PE/IB/Sector Analysis/Equity Research",
+  "business_model": "string or null",
   "time_period": "string or null",
-  "date": "string or null"
+  "date": "string or null",
+  "technology_category": "string or null"
 }
 
 ---
 
-### 🧠 Classification Rules for `type_of_analysis`
+Classification Rules for `type_of_analysis`:
 
-- **VC**: 
-  - Mentions of early-stage funding, founders, startup growth, venture rounds (Seed/Series A/B)
-  - Phrases like “total addressable market”, “product-market fit”, “traction”
-
-- **PE**: 
-  - Focus on LBO, EBITDA margins, operational efficiency, ownership buyouts, cost structure optimization
-  - Language involving acquisitions or control investing
-
-- **IB**: 
-  - References to M&A advisory, capital raising, IPO prep, financial modeling, comparables
-  - Request for pitch decks, valuation comps, DCF
-
-- **Equity Research**: 
-  - Earnings reviews, analyst ratings, price targets, public company financials
-  - Phrases like “stock outlook”, “buy/sell/hold”, “Q2 performance”
-
-- **Sector Analysis**: 
-  - Industry-level outlooks, market size, macro trends, forecasts across multiple companies
-  - Phrases like “state of the industry”, “sector trends”, “market opportunities”
+- VC → mentions early-stage startups, traction, product-market fit, team, TAM
+- PE → focuses on acquisitions, EBITDA, cash flow, buyouts, leverage
+- IB → asks about M&A, IPOs, pitch decks, DCF, valuation comps
+- Equity Research → mentions earnings, guidance, analyst sentiment, public companies
+- Sector Analysis → trends, forecasts, macroeconomic drivers, cross-industry
 
 ---
 
-### 🧪 Few-Shot Examples
+PART 2: QUERY EXPANSION
 
-#### Example 1:
-Can you summarize the recent Q4 earnings of NVIDIA? I want to understand how their margins evolved this quarter and what their guidance looks like.
+Rewrite the user's query into a deep, metrics-driven research prompt.
 
-```json
+Include:
+- Specific KPIs and quantitative data to retrieve (e.g., revenue, EBITDA, CAC, EV/EBITDA)
+- Competitive landscape or market benchmarks
+- Industry metrics if applicable (e.g., TAM, growth rate, regulatory impact)
+- No fluff or open-ended tasks. Use sharp, analytical language.
+
+---
+
+EXAMPLES
+
+Example 1 – Query:
+Should I invest in Ola Electric?
+
+Metadata:
 {
-  "company_name": "NVIDIA",
-  "industry": "Semiconductors",
-  "country": "USA",
-  "financial_metric": "margins, earnings, guidance",
-  "type_of_analysis": "Equity Research",
-  "time_period": "Q4",
-  "date": null
-}
-```
-
-#### Example 2:
-I'm evaluating a Series A startup in the edtech space. Can you help build an investment memo focusing on market size, traction, and team?
-
-```json
-{
-  "company_name": null,
-  "industry": "EdTech",
-  "country": null,
-  "financial_metric": "market size, traction",
+  "company_entities": [
+    {
+      "name": "Ola Electric",
+      "type": "startup",
+      "description": "Indian electric vehicle manufacturer",
+      "stage": "growth",
+      "founding_year": "2017"
+    }
+  ],
+  "industry": "Electric Vehicles",
+  "sub_industry": "Two-wheeler EVs",
+  "country": "India",
+  "region": "Asia",
+  "financial_metric": "market share, revenue growth, funding history",
+  "startup_metrics": ["TAM", "CAC", "LTV", "churn rate", "user growth"],
   "type_of_analysis": "VC",
+  "business_model": "Direct-to-Consumer",
   "time_period": null,
-  "date": null
+  "date": null,
+  "technology_category": "Battery Tech"
 }
-```
 
-#### Example 3:
-What's your take on the European energy sector given current macro trends? Especially post-COVID growth and ESG investment flows.
+Expanded Research Prompt:
+- What is the TAM, SAM, and SOM for electric two-wheelers in India?
+- What is Ola Electric's YoY revenue growth, user base, and delivery volume over the past 3 years?
+- What is Ola's CAC, LTV, and churn rate? How do these compare to peers like Ather and TVS?
+- How much has Ola raised to date? List round-wise funding, lead investors, and post-money valuations.
+- What are the company's key differentiators in battery tech, range, and charging infra?
+- Are there any recent operational or regulatory red flags?
 
-```json
+---
+
+Example 2 – Query:
+Compare Tesla and Rivian's performance in the last 12 months.
+
+Metadata:
 {
-  "company_name": null,
-  "industry": "Energy",
-  "country": "Europe",
-  "financial_metric": "growth trends, ESG flows",
-  "type_of_analysis": "Sector Analysis",
-  "time_period": "post-COVID",
-  "date": null
-}
-```
-
-#### Example 4:
-Please analyze Tesla’s Q2 2023 10-Q and compare it with Ford’s to evaluate their operational risks.
-
-```json
-{
-  "company_name": "Tesla, Ford",
-  "industry": "Automotive",
+  "company_entities": [
+    {
+      "name": "Tesla",
+      "type": "established_company",
+      "description": "Global EV and energy company",
+      "stage": "public",
+      "founding_year": "2003"
+    },
+    {
+      "name": "Rivian",
+      "type": "startup",
+      "description": "American electric truck and SUV manufacturer",
+      "stage": "public",
+      "founding_year": "2009"
+    }
+  ],
+  "industry": "Electric Vehicles",
+  "sub_industry": "Automotive OEMs",
   "country": "USA",
-  "financial_metric": "operational risks",
+  "region": "North America",
+  "financial_metric": "revenue, net income, EPS, deliveries",
+  "startup_metrics": [],
   "type_of_analysis": "Equity Research",
-  "time_period": "Q2 2023",
-  "date": "2023-06-30"
+  "business_model": "Manufacturing + Direct Sales",
+  "time_period": "Last 12 months",
+  "date": null,
+  "technology_category": "EV Platforms"
 }
-```
 
-#### Example 5:
-
-We’re assessing a bolt-on acquisition in the specialty chemicals space. Can you provide comps and recent deal multiples?
-
-```json
-{
-  "company_name": null,
-  "industry": "Specialty Chemicals",
-  "country": null,
-  "financial_metric": "deal multiples",
-  "type_of_analysis": "PE",
-  "time_period": null,
-  "date": null
-}
-```
-
-Once you have extracted the metadata and identified the `type_of_analysis`, rewrite and expand the user’s original query into a deeper, multi-layered research request.
-
-The goal is to:
-- Frame the right questions a financial analyst would ask in this context
-- Enrich the original prompt by suggesting relevant data to pull (competitors, market size, recent filings, KPIs, risks)
-- Transform it into an actionable research pipeline prompt
-
-The final output should include:
-1. The original query
-2. A structured, enhanced version titled: `Expanded Research Prompt`
-3. The updated goal: `Research Objective`
+Expanded Research Prompt:
+- Provide Tesla and Rivian's revenue, EPS, and net income trends for the past 4 quarters.
+- How do their delivery volumes and production scale compare over the same period?
+- What was the YoY stock performance and key events impacting valuation?
+- What is each company's gross margin and cash burn rate?
+- How do analyst forecasts and institutional sentiment differ for the two stocks?
 
 ---
 
-Use the following logic for expansion:
-
-### If `type_of_analysis` = **VC**:
-- Add: market size (TAM), product-market fit, traction metrics, team background, funding history, competitor scan, tech stack or product differentiation, regulatory risks
-
-### If `type_of_analysis` = **PE**:
-- Add: historical financial performance, EBITDA margins, operational KPIs, cost optimization opportunities, industry multiples, LBO suitability, downside risks
-
-### If `type_of_analysis` = **IB**:
-- Add: comparable deals, DCF inputs, strategic rationale, valuation comps (EV/EBITDA, revenue multiples), M&A precedent transactions, investor interest
-
-### If `type_of_analysis` = **Equity Research**:
-- Add: earnings summaries, analyst expectations vs actuals, valuation metrics, guidance analysis, management commentary, stock trends
-
-### If `type_of_analysis` = **Sector Analysis**:
-- Add: industry macro trends, regulatory landscape, leading players, growth drivers, recent disruptions, funding trends, performance benchmarks
-
----
-
-### Examples
-
-#### Example 1 – Venture Capital  
-**Original Query:**  
-“Should I invest in Ola Motors?”
-
-**Expanded Research Prompt:**  
-- What is Ola Motors' current traction: revenue, users, major milestones?  
-- What is the size of the electric vehicle market in India (TAM/SAM)?  
-- Who are Ola’s major competitors (e.g., Ather, Tata EV, etc.), and how do they compare in funding, product, and market share?  
-- What are the latest developments in battery technology and charging infrastructure in India?  
-- What funding rounds has Ola completed? Who are the current investors?  
-- Are there any red flags in recent news (e.g., vehicle recalls, executive exits)?  
-- What is the strength and background of Ola’s founding team?
-
-**Research Objective:**  
-Generate a VC-style investment memo assessing Ola Motors, covering market opportunity, traction, risks, and competitive position.
-
----
-
-#### Example 2 – Sector Analysis  
-**Original Query:**  
-“What’s happening in the global semiconductors market?”
-
-**Expanded Research Prompt:**  
-- What are the top trends driving semiconductor growth globally (e.g., AI, IoT, geopolitics)?  
-- How has chip manufacturing capacity evolved post-2022?  
-- What are the top players and their market shares?  
-- What macroeconomic factors (supply chain, inflation) are impacting the sector?  
-- What’s the status of U.S.-China tech restrictions and CHIPS Act implications?  
-- Summarize recent funding, M&A, and earnings trends across the sector.
-
-**Research Objective:**  
-Generate a sector-level report on the global semiconductor industry, highlighting key trends, risks, and growth outlook.
-
----
-
-#### Example 3 – Equity Research  
-**Original Query:**  
-“How did Netflix perform this quarter?”
-
-**Expanded Research Prompt:**  
-- What were Netflix’s Q1 revenue, EPS, and net income?  
-- How do these numbers compare to the previous quarter and to analyst expectations?  
-- What guidance did Netflix issue for the next quarter?  
-- Were there any major announcements from the earnings call (e.g., pricing, content strategy)?  
-- How did the stock react post-earnings?
-
-**Research Objective:**  
-Generate an earnings summary and outlook analysis for Netflix based on Q1 results and market reaction.
-
----
-
-This enrichment prompt can be added **after the metadata extraction** in your pipeline to auto-upgrade vague or basic prompts into analyst-grade research prompts ready for ChatGPT or a retrieval-based engine to execute.
+Now complete the task in this format using the user's input.
 """
 
 # ------ AGENT PROMPTS ------
 
-MISSING_INFO_CHECKER_PROMPT = """You are an assistant that identifies parts of a query that were NOT answered.
-Original query: {original_query}
-Agent response: {agent_response}
+MISSING_INFO_CHECKER_PROMPT = """You are a highly skilled financial data expert and an advanced language model agent tasked with reviewing responses to financial research queries.
 
-List the parts of the original query that were not answered. If everything is answered, say 'None'.
+CONTEXT:
+Our process works as follows:
+1. The user submits a query about a company, industry, or financial topic
+2. We expand this query into detailed sub-questions
+3. Our agent attempts to answer these questions
+4. Your job is to identify what information is still missing
+
+ORIGINAL QUERY: {original_query}
+
+EXPANDED QUERY: {expanded_query}
+
+QUESTION-ANSWER PAIRS: {qa_pairs}
+
+AGENT RESPONSE: {agent_response}
+
+TASK INSTRUCTIONS:
+1. Carefully analyze the original query and agent response
+2. Identify specific information that was requested but not provided in the response
+3. For each missing piece of information:
+   - Be precise about what data points or analysis is missing
+   - Frame it as a targeted follow-up question that would elicit the missing information
+   - Prioritize financial metrics, quantitative data, and comparative analysis when missing
+4. If all aspects of the query were adequately addressed, respond with "None"
+
+Important guidelines:
+- Focus on substantive missing information (not minor details)
+- Prioritize core financial and business metrics that were requested
+- Don't ask for information that was already provided in the response
+- Format each missing item as a complete, standalone follow-up question
+- Be specific - don't ask general questions like "Tell me more about X"
+- Don't restate the entire original query if parts were answered
+
+OUTPUT FORMAT:
+Return a list of specific follow-up questions, one per line, each addressing a missing component. If nothing is missing, return only the word "None".
+"""
+
+RESPONSE_MERGER_PROMPT = """You are an expert financial analyst tasked with creating a comprehensive, professional financial research report from multiple sources of information.
+
+TASK CONTEXT:
+Our system has:
+1. Processed an original user query about financial/business information
+2. Expanded it into detailed research questions
+3. Collected answers to these questions through multiple API calls and data sources
+4. Gathered various question-answer pairs that need to be synthesized into a cohesive report
+
+YOUR RESPONSIBILITY:
+Create a comprehensive, well-structured financial analysis report that:
+1. Synthesizes all information into a logical narrative flow
+2. Eliminates redundancy, repetition, and contradictions
+3. Organizes content into clear sections with appropriate headings
+4. Prioritizes quantitative data, financial metrics, and evidence-based insights
+5. Adds professional context and market perspective where appropriate
+6. Follows best practices for financial research reports
+
+REPORT INPUTS:
+Original Query: {original_query}
+
+Expanded Research Query: {expanded_query}
+
+Question-Answer Pairs: {qa_pairs}
+
+Entity Metadata: {metadata}
+
+REPORT STRUCTURE GUIDELINES:
+1. Executive Summary/Overview (1-2 paragraphs highlighting key findings)
+2. Business Model & Operations
+3. Financial Performance & Metrics (with specific numbers/percentages)
+4. Market Position & Competitive Analysis
+5. Recent Developments & News
+6. Leadership & Management Analysis
+7. Risk Factors & Considerations
+8. Outlook & Conclusion
+
+FORMATTING REQUIREMENTS:
+- Use clear section headings (## Section Title)
+- Include relevant quantitative data in your analysis
+- Format financial figures consistently (e.g., "$10.5M" or "$10.5 million")
+- Highlight important metrics or trends
+- Use bullet points for lists of features, products, or key points
+- Maintain a professional, objective tone throughout
+
+Create a polished, publication-quality report that a financial professional would be proud to present.
 """
 
 # ------ CHAIN PROMPTS ------
