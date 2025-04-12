@@ -1,5 +1,5 @@
 # ------------------------ IMPORTS ------------------------
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 import faiss
 import numpy as np
 import os
