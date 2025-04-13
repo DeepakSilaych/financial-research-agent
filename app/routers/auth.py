@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import timedelta
 
 from ..database.database import get_db
-from ..models.models import User
+from ..models.models import User, Workspace
 from ..schemas.schemas import UserCreate, UserResponse, Token, UserLogin
 from ..auth.auth import (
     get_password_hash, 
@@ -49,6 +49,19 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+    
+    # Create personal workspace for the user
+    personal_workspace = Workspace(
+        name=f"{user.username}'s Workspace",
+        description="Personal workspace",
+        owner_id=db_user.id
+    )
+    
+    # Add the user as a member of their personal workspace
+    personal_workspace.members.append(db_user)
+    
+    db.add(personal_workspace)
+    db.commit()
     
     return db_user
 

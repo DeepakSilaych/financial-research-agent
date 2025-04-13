@@ -119,4 +119,44 @@ def delete_report(
     db.delete(report)
     db.commit()
     
-    return None 
+    return None
+
+@router.post("/generate", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
+def generate_report(
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Generate a new report based on selected documents."""
+    report_type = data.get("report_type")
+    document_ids = data.get("document_ids", [])
+
+    if not report_type:
+        raise HTTPException(status_code=400, detail="Report type is required")
+    
+    if not document_ids:
+        raise HTTPException(status_code=400, detail="At least one document must be selected")
+    
+    # Create a title based on report type
+    title = f"{report_type.capitalize()} Report"
+    
+    # In a real implementation, this would process the documents and generate actual content
+    # For this example, we'll create a simple placeholder report
+    content = f"This is a generated {report_type} report based on {len(document_ids)} documents."
+    
+    # Create the report record
+    db_report = Report(
+        title=title,
+        description=f"AI-generated {report_type} report",
+        content=content,
+        report_type=report_type,
+        status="completed",
+        pages=1,
+        user_id=current_user.id
+    )
+    
+    db.add(db_report)
+    db.commit()
+    db.refresh(db_report)
+    
+    return db_report 

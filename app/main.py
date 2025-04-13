@@ -41,7 +41,7 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Mount static file directory for uploads
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/files", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # Include routers
 app.include_router(auth.router)

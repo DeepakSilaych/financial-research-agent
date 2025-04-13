@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 
 from ..database.database import get_db
-from ..models.models import User, Upload
+from ..models.models import User, Upload, Workspace
 from ..schemas.schemas import UploadResponse
 from ..auth.auth import get_current_active_user
 
@@ -28,13 +28,34 @@ router = APIRouter(
 async def upload_file(
     file: UploadFile = File(...),
     description: Optional[str] = Form(None),
+    workspace_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Upload a file."""
-    # Create user upload directory if it doesn't exist
-    user_upload_dir = Path(UPLOAD_DIR) / f"user_{current_user.id}"
-    os.makedirs(user_upload_dir, exist_ok=True)
+    # Handle workspace-specific uploads
+    upload_dir_path = Path(UPLOAD_DIR)
+    
+    if workspace_id:
+        # Check if the workspace exists and the user is a member
+        workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        if not workspace:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+            
+        # Check if user is a member of the workspace
+        if current_user not in workspace.members:
+            raise HTTPException(status_code=403, detail="Not authorized to upload to this workspace")
+            
+        # Create workspace upload directory
+        upload_path = upload_dir_path / f"workspace_{workspace_id}"
+        relative_path = Path(f"workspace_{workspace_id}")
+    else:
+        # Use the user-specific directory as before
+        upload_path = upload_dir_path / f"user_{current_user.id}"
+        relative_path = Path(f"user_{current_user.id}")
+    
+    # Create directory if it doesn't exist
+    os.makedirs(upload_path, exist_ok=True)
     
     # Generate unique filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -42,7 +63,7 @@ async def upload_file(
     unique_filename = f"{timestamp}_{file.filename}"
     
     # Save file to disk
-    file_path = os.path.join(user_upload_dir, unique_filename)
+    file_path = os.path.join(upload_path, unique_filename)
     
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -53,7 +74,7 @@ async def upload_file(
     # Create database record
     db_upload = Upload(
         filename=file.filename,
-        file_path=str(Path(f"user_{current_user.id}") / unique_filename),
+        file_path=str(relative_path / unique_filename),
         file_size=file_size,
         file_type=file.content_type,
         description=description,
@@ -70,11 +91,31 @@ async def upload_file(
 def get_uploads(
     skip: int = 0,
     limit: int = 100,
+    workspace_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get all uploads for the current user."""
-    return db.query(Upload).filter(Upload.user_id == current_user.id).offset(skip).limit(limit).all()
+    """Get all uploads for the current user or for a specific workspace."""
+    query = db.query(Upload).filter(Upload.user_id == current_user.id)
+    
+    if workspace_id:
+        # Verify workspace exists and user is a member
+        workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        if not workspace:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+            
+        if current_user not in workspace.members:
+            raise HTTPException(status_code=403, detail="Not authorized to access this workspace")
+            
+        # Filter uploads for this workspace by checking the file_path
+        workspace_path = f"workspace_{workspace_id}"
+        query = query.filter(Upload.file_path.like(f"{workspace_path}/%"))
+    else:
+        # Filter for user-specific uploads only (not in workspaces)
+        user_path = f"user_{current_user.id}"
+        query = query.filter(Upload.file_path.like(f"{user_path}/%"))
+    
+    return query.offset(skip).limit(limit).all()
 
 @router.get("/{upload_id}", response_model=UploadResponse)
 def get_upload(
@@ -139,4 +180,4 @@ def download_upload(
     
     # In a real app, this would generate a signed URL or serve the file
     # For simplicity, we just return the path
-    return {"download_url": f"/uploads/{upload.file_path}", "filename": upload.filename} 
+    return {"download_url": f"/files/{upload.file_path}", "filename": upload.filename} 
