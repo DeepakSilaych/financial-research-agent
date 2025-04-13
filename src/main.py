@@ -146,6 +146,10 @@ def process_query(user_input, user_id=None):
 
 # Example usage
 if __name__ == "__main__":
-    query = "Give me a detailed company profile of Tesla, including its industry, business model, key products/services, market position, leadership, and recent news."
+    query = "Give me matrix for tesla stocks"
     result = process_query(query)
-    print(result)
+
+
+    info("=================================Result ==================================")
+    info(result["response"])
+    info("==========================================================================")

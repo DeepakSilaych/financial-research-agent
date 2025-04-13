@@ -16,6 +16,8 @@ from prompts import MISSING_INFO_CHECKER_PROMPT, RESPONSE_MERGER_PROMPT
 from logger import info, error, log_request, log_response
 import uuid
 import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Load .env file
 load_dotenv()
@@ -24,7 +26,7 @@ os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 # Set up LangChain agent
 llm = ChatOpenAI(temperature=0)
 agent = initialize_agent(
-    tools=[stock_tool, news_tool, company_analyzer_tool, fred_tool,company_profile_tool,financial_statements_tool,historical_performance_tool,technical_indicators_tool],
+    tools=[stock_tool, news_tool, company_analyzer_tool, fred_tool, company_profile_tool, financial_statements_tool, historical_performance_tool, technical_indicators_tool],
     llm=llm,
     agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
     verbose=True
@@ -85,6 +87,37 @@ def check_missing_parts(original_query: str, expanded_query: str, agent_response
         error(f"Error checking for missing parts: {str(e)}")
         return []
 
+def process_query(agent, query: str) -> tuple:
+    """Process a single query through the agent and return the question-answer pair"""
+    try:
+        info(f"Processing query: '{query}'")
+        result = agent.invoke(query)
+        response = result["output"] if isinstance(result, dict) else str(result)
+        info(f"Got response ({len(response)} chars): {response[:100]}...")
+        return (query, response)
+    except Exception as e:
+        error(f"Error processing query: {str(e)}")
+        return (query, f"Error processing your request. {str(e)}")
+
+def process_queries_in_parallel(agent, queries: list, max_workers: int = 4) -> list:
+    """Process multiple queries in parallel using a thread pool"""
+    results = []
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_query = {executor.submit(process_query, agent, query): query for query in queries}
+        
+        # Process results as they complete
+        for future in future_to_query:
+            try:
+                results.append(future.result())
+            except Exception as e:
+                query = future_to_query[future]
+                error(f"Error in parallel processing for query '{query}': {str(e)}")
+                results.append((query, f"Error processing your request. {str(e)}"))
+    
+    return results
+
 def merge_responses(original_query: str, expanded_query: str, qa_pairs: list, metadata: dict) -> str:
     """
     Merge multiple question-answer pairs into a cohesive response
@@ -126,7 +159,7 @@ def merge_responses(original_query: str, expanded_query: str, qa_pairs: list, me
         # Fallback to just returning the concatenated responses
         return f"Original Query: {original_query}\n\n" + qa_text
 
-def run_agent_loop(agent, query, original_query=None, metadata=None, max_retries=5, user_id=None):
+def run_agent_loop(agent, query, original_query=None, metadata=None, max_retries=5, user_id=None, max_parallel_workers=3):
     """
     Run the agent with retry loop for handling missing information
     
@@ -137,6 +170,7 @@ def run_agent_loop(agent, query, original_query=None, metadata=None, max_retries
         metadata: Metadata about the query content
         max_retries: Maximum number of iterations to perform
         user_id: User identifier for tracking
+        max_parallel_workers: Maximum number of parallel workers for decomposed questions
         
     Returns:
         A cohesive response addressing all aspects of the query
@@ -155,54 +189,101 @@ def run_agent_loop(agent, query, original_query=None, metadata=None, max_retries
     log_request(user_id, original_query)
     
     seen_queries = set([query])  # Track queries we've already processed
-    to_ask = [query]  # Queue of queries to process
     answered_parts = []  # Track parts that have been answered
     qa_pairs = []  # Store Q&A pairs for final merging
-    iteration_count = 0
     
-    for iteration in range(max_retries):
-        iteration_count = iteration + 1
-        if not to_ask:
-            info("No more questions to ask, ending agent loop")
-            break
-
-        current_query = to_ask.pop(0)
-        info(f"Iteration {iteration_count}: Asking agent: '{current_query}'")
+    # First iteration - process the main query
+    info(f"Iteration 1: Processing main query")
+    main_qa_pair = process_query(agent, query)
+    qa_pairs.append(main_qa_pair)
+    answered_parts.append(query)
+    
+    # Check for missing parts after the first query
+    missing_parts = check_missing_parts(
+        original_query=original_query,
+        expanded_query=query,
+        agent_response=main_qa_pair[1],
+        answered_parts=answered_parts,
+        qa_pairs=qa_pairs
+    )
+    
+    if missing_parts:
+        info(f"Found {len(missing_parts)} missing parts, processing in parallel")
+        # Add all missing parts to seen_queries to avoid duplicates
+        for part in missing_parts:
+            seen_queries.add(part)
         
-        try:
-            # Invoke the agent with the current query
-            result = agent.invoke(current_query)
-            response = result["output"] if isinstance(result, dict) else str(result)
-            info(f"Agent response ({len(response)} chars): {response[:100]}...")
+        # Process missing parts in parallel
+        new_qa_pairs = process_queries_in_parallel(agent, missing_parts, max_workers=max_parallel_workers)
+        qa_pairs.extend(new_qa_pairs)
+        
+        # Add all processed parts to answered_parts
+        for part, _ in new_qa_pairs:
+            answered_parts.append(part)
             
-            # Store this Q&A pair
-            qa_pairs.append((current_query, response))
+        # Check if there are still missing parts after parallel processing
+        remaining_iterations = max_retries - 2  # Account for first iteration and parallel batch
+        iteration_count = 2  # Start with iteration 2
+        
+        # Continue with sequential processing for any remaining iterations if needed
+        if remaining_iterations > 0:
+            # Combine all responses into one text for comprehensive checking
+            all_responses = "\n\n".join([resp for _, resp in qa_pairs])
             
-            # Pass the accumulated qa_pairs to the missing parts checker for context
-            missing = check_missing_parts(
-                original_query=original_query, 
-                expanded_query=query, 
-                agent_response=response, 
-                answered_parts=answered_parts, 
+            # Check for any remaining missing parts
+            still_missing = check_missing_parts(
+                original_query=original_query,
+                expanded_query=query,
+                agent_response=all_responses,
+                answered_parts=answered_parts,
                 qa_pairs=qa_pairs
             )
             
-            # Consider this part answered even if some details are missing
-            answered_parts.append(current_query)
+            # Process any remaining missing parts sequentially
+            to_ask = [part for part in still_missing if part not in seen_queries]
             
-            # Add missing parts to the queue if they're new
-            for part in missing:
-                if part not in seen_queries:
-                    info(f"Adding follow-up question: '{part}'")
-                    to_ask.append(part)
-                    seen_queries.add(part)
-                    
-        except Exception as e:
-            error(f"Error in agent iteration {iteration_count}: {str(e)}")
-            # Store the error as the response
-            qa_pairs.append((current_query, f"Error processing your request. {str(e)}"))
+            for iteration in range(remaining_iterations):
+                iteration_count += 1
+                if not to_ask:
+                    info("No more questions to ask, ending agent loop")
+                    break
 
-    info(f"Agent loop completed after {iteration_count} iterations with {len(qa_pairs)} Q&A pairs")
+                current_query = to_ask.pop(0)
+                seen_queries.add(current_query)
+                info(f"Iteration {iteration_count}: Asking agent: '{current_query}'")
+                
+                try:
+                    # Invoke the agent with the current query
+                    new_qa_pair = process_query(agent, current_query)
+                    qa_pairs.append(new_qa_pair)
+                    
+                    # Consider this part answered even if some details are missing
+                    answered_parts.append(current_query)
+                    
+                    # Only check for more missing parts if we have more iterations left
+                    if iteration < remaining_iterations - 1 and to_ask:
+                        all_responses = "\n\n".join([resp for _, resp in qa_pairs])
+                        more_missing = check_missing_parts(
+                            original_query=original_query,
+                            expanded_query=query,
+                            agent_response=all_responses,
+                            answered_parts=answered_parts,
+                            qa_pairs=qa_pairs
+                        )
+                        
+                        # Add any new missing parts to the queue
+                        for part in more_missing:
+                            if part not in seen_queries:
+                                info(f"Adding follow-up question: '{part}'")
+                                to_ask.append(part)
+                                seen_queries.add(part)
+                                
+                except Exception as e:
+                    error(f"Error in agent iteration {iteration_count}: {str(e)}")
+                    # Store the error as the response
+                    qa_pairs.append((current_query, f"Error processing your request. {str(e)}"))
+    
+    info(f"Agent loop completed with {len(qa_pairs)} Q&A pairs")
     
     # Merge all responses into a cohesive answer
     final_response = merge_responses(original_query, query, qa_pairs, metadata)
@@ -210,34 +291,4 @@ def run_agent_loop(agent, query, original_query=None, metadata=None, max_retries
     log_response(user_id, original_query, final_response)
     return final_response
 
-if __name__ == "__main__":
-    # Example usage
-    query = "Give me a detailed company profile of Tesla, including its industry, business model, key products/services, market position, leadership, and recent news."
-    expanded_query = """
-    - What are the primary sectors of Tesla's operation? How does Tesla's business model integrate these sectors?
-    - Detail Tesla's major products and their contribution to revenue.
-    - Evaluate Tesla's current market position in the electric vehicle and renewable energy sectors globally.
-    - Review the current leadership team of Tesla, focusing on key figures like Elon Musk.
-    - What are the most recent developments and news about Tesla that could impact its business?
-    - Who are Tesla's primary competitors in both the electric vehicle and renewable energy sectors?
-    """
-    
-    metadata = {
-        "company_entities": [
-            {
-                "name": "Tesla",
-                "type": "established_company",
-                "description": "Leading manufacturer of electric vehicles and clean energy solutions",
-                "stage": "public",
-                "founding_year": "2003"
-            }
-        ],
-        "industry": "Automotive and Energy",
-        "sub_industry": "Electric Vehicles and Clean Energy",
-        "country": "USA",
-        "region": "North America"
-    }
-    
-    user_id = "user_1234"  # Example user ID
-    response = run_agent_loop(agent, expanded_query, original_query=query, metadata=metadata, user_id=user_id)
-    print(response)
+
