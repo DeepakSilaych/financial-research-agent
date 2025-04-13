@@ -1,14 +1,13 @@
 import os
 import yfinance as yf
-import logging
 import pandas as pd
 from dotenv import load_dotenv
 from langchain.agents import Tool, initialize_agent, AgentType
 from langchain_openai import ChatOpenAI
+from src.logger import info, error, warning, get_logger
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('finance_agent')
+# Setup logger for the module
+logger = get_logger("finance_stock_tool")
 
 # Load .env file
 load_dotenv()
@@ -34,7 +33,7 @@ def format_value(value, is_percentage=False, is_currency=False, in_millions=Fals
 # Core stock information function
 def get_stock_info(ticker: str) -> str:
     """Fetches comprehensive stock information for a given ticker symbol."""
-    logger.info(f"Getting stock info for ticker: {ticker}")
+    info(f"Getting stock info for ticker: {ticker}")
     
     try:
         ticker = ticker.strip().strip("'").strip('"')
@@ -84,7 +83,7 @@ def get_stock_info(ticker: str) -> str:
             f"Recommendation: {recommendation}"
         )
         
-        logger.info(f"Successfully retrieved stock info for {ticker}")
+        info(f"Successfully retrieved stock info for {ticker}")
         return result
     except Exception as e:
         error_msg = f"Error fetching stock info: {str(e)}"
@@ -94,7 +93,7 @@ def get_stock_info(ticker: str) -> str:
 # Financial statements function
 def get_financial_statements(ticker: str, statement_type: str = "income") -> str:
     """Fetches financial statements for a given ticker."""
-    logger.info(f"Getting {statement_type} statement for ticker: {ticker}")
+    info(f"Getting {statement_type} statement for ticker: {ticker}")
     
     try:
         ticker = ticker.strip().strip("'").strip('"')
@@ -145,7 +144,7 @@ def get_financial_statements(ticker: str, statement_type: str = "income") -> str
 # Historical performance function
 def get_historical_performance(ticker: str, period: str = "1y") -> str:
     """Gets historical performance data for a specified period."""
-    logger.info(f"Getting historical performance for ticker: {ticker} over period: {period}")
+    info(f"Getting historical performance for ticker: {ticker} over period: {period}")
     
     try:
         ticker = ticker.strip().strip("'").strip('"')
@@ -186,7 +185,7 @@ def get_historical_performance(ticker: str, period: str = "1y") -> str:
 # Technical indicators function
 def get_technical_indicators(ticker: str) -> str:
     """Calculates technical indicators for a given ticker."""
-    logger.info(f"Getting technical indicators for ticker: {ticker}")
+    info(f"Getting technical indicators for ticker: {ticker}")
     
     try:
         ticker = ticker.strip().strip("'").strip('"')

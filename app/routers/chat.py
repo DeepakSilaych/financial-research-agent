@@ -2,11 +2,20 @@ from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSoc
 from sqlalchemy.orm import Session
 from typing import List
 import json
+from pydantic import BaseModel
 
 from ..database.database import get_db, SessionLocal
 from ..models.models import User, Chat, Message, Workspace
-from ..schemas.schemas import ChatCreate, ChatResponse, MessageCreate, MessageResponse, WebSocketMessage
+from ..schemas.schemas import (
+    ChatCreate, ChatResponse, MessageCreate, MessageResponse, 
+    WebSocketMessage, QueryResponse, TableModel, GraphModel
+)
 from ..auth.auth import get_current_active_user
+import asyncio
+
+from src.main import process_query
+from src.visualization_extractor import extract_visualizations
+
 
 router = APIRouter(
     prefix="/chats",
@@ -196,7 +205,7 @@ def get_messages(
     return db.query(Message).filter(Message.chat_id == chat_id).offset(skip).limit(limit).all()
 
 @router.websocket("/ws/{chat_id}")
-async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str):
+async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str, session_id: str = None, workspace_id: int = None):
     """WebSocket endpoint for real-time chat messages."""
     try:
         # Authenticate user from token
@@ -211,6 +220,11 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str):
                 await websocket.close(code=1008, reason="Chat not found")
                 return
                 
+            # If workspace_id is provided, verify it matches the chat's workspace
+            if workspace_id and chat.workspace_id and int(workspace_id) != chat.workspace_id:
+                await websocket.close(code=1008, reason="Workspace ID mismatch")
+                return
+                
             if chat.user_id != current_user.id:
                 if chat.workspace_id:
                     workspace = db.query(Workspace).filter(Workspace.id == chat.workspace_id).first()
@@ -221,17 +235,34 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str):
                     await websocket.close(code=1008, reason="Not authorized to access this chat")
                     return
             
-            # Accept the connection and add it to the connection manager
-            await manager.connect(websocket, chat_id, current_user.id)
+            client_id = session_id or current_user.id
+            await manager.connect(websocket, chat_id, client_id)
             
             try:
                 while True:
                     data = await websocket.receive_text()
                     message_data = json.loads(data)
+
+                    print(f"Received data: {message_data}")
+                    
+                    # Extract message content from received data
+                    content = message_data.get("content", "")
+                    if not content:
+                        await websocket.send_text(json.dumps({
+                            "error": "Message content is required"
+                        }))
+                        continue
+                    
+                    # Extract visualization options if provided
+                    visualization_options = message_data.get("visualization_options", {})
+                    include_tables = visualization_options.get("include_tables", True)
+                    include_graphs = visualization_options.get("include_graphs", True)
+                    max_tables = visualization_options.get("max_tables", 5)
+                    max_graphs = visualization_options.get("max_graphs", 3)
                     
                     # Create a new message in the database
                     db_message = Message(
-                        content=message_data.get("content", ""),
+                        content=content,
                         is_from_user=True,
                         chat_id=chat_id,
                         user_id=current_user.id
@@ -241,28 +272,60 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str):
                     db.commit()
                     db.refresh(db_message)
                     
+                    # Include session_id in the response if it was provided
+                    message_response = {
+                        "type": "message",
+                        "message_type": "user",
+                        "data": {
+                            "id": db_message.id,
+                            "uuid": str(db_message.id),
+                            "user": current_user.username or "User",
+                            "format": "txt",
+                            "content": db_message.content,
+                            "is_from_user": db_message.is_from_user,
+                            "user_id": db_message.user_id,
+                            "chat_id": db_message.chat_id,
+                            "created_at": db_message.created_at.isoformat()
+                        }
+                    }
+                    
+                    if session_id:
+                        message_response["session_id"] = session_id
+                        
+                    if workspace_id:
+                        message_response["workspace_id"] = workspace_id
+                    
                     # Broadcast the message to all connected clients
-                    await manager.broadcast(
-                        {
-                            "type": "message",
-                            "data": {
-                                "id": db_message.id,
-                                "content": db_message.content,
-                                "is_from_user": db_message.is_from_user,
-                                "user_id": db_message.user_id,
-                                "chat_id": db_message.chat_id,
-                                "created_at": db_message.created_at.isoformat()
-                            }
-                        },
-                        chat_id
-                    )
+                    await manager.broadcast(message_response, chat_id)
+
+                    # Process the query with the AI
+                    ai_response_obj = process_query(db_message.content, user_id=str(current_user.id))
                     
-                    # Simulate AI response (in a real app, this would call an AI service)
-                    ai_response = f"This is a simulated AI response to: {db_message.content}"
+                    # Extract the text response
+                    ai_response_text = ai_response_obj.get("response", "Sorry, I couldn't process your request.")
                     
-                    # Create AI response message
+                    # Extract or generate visualizations
+                    tables = ai_response_obj.get("tables", [])
+                    graphs = ai_response_obj.get("graphs", [])
+                    
+                    # If tables and graphs are empty, and we should include them, extract them from the text
+                    if (include_tables or include_graphs) and (not tables or not graphs):
+                        visualizations = extract_visualizations(
+                            ai_response_text, 
+                            db_message.content,
+                            max_tables=max_tables,
+                            max_graphs=max_graphs
+                        )
+                        
+                        if include_tables:
+                            tables = visualizations.get("tables", [])
+                            
+                        if include_graphs:
+                            graphs = visualizations.get("graphs", [])
+
+                    # Create AI response message in the database
                     ai_message = Message(
-                        content=ai_response,
+                        content=ai_response_text,
                         is_from_user=False,
                         chat_id=chat_id,
                         user_id=current_user.id  # AI response is still associated with the user
@@ -272,21 +335,35 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str):
                     db.commit()
                     db.refresh(ai_message)
                     
-                    # Broadcast AI response
-                    await manager.broadcast(
-                        {
-                            "type": "message",
-                            "data": {
-                                "id": ai_message.id,
-                                "content": ai_message.content,
-                                "is_from_user": ai_message.is_from_user,
-                                "user_id": ai_message.user_id,
-                                "chat_id": ai_message.chat_id,
-                                "created_at": ai_message.created_at.isoformat()
+                    # Prepare AI response with session and workspace IDs if provided
+                    ai_response_data = {
+                        "type": "message",
+                        "message_type": "bot",
+                        "data": {
+                            "id": ai_message.id,
+                            "uuid": str(ai_message.id),
+                            "user": "AI Assistant",
+                            "format": "md", # Change to markdown format for better rendering
+                            "content": ai_message.content,
+                            "is_from_user": ai_message.is_from_user,
+                            "user_id": ai_message.user_id,
+                            "chat_id": ai_message.chat_id,
+                            "created_at": ai_message.created_at.isoformat(),
+                            "visualizations": {
+                                "graphs": graphs,
+                                "tables": tables
                             }
-                        },
-                        chat_id
-                    )
+                        }
+                    }
+                    
+                    if session_id:
+                        ai_response_data["session_id"] = session_id
+                        
+                    if workspace_id:
+                        ai_response_data["workspace_id"] = workspace_id
+                    
+                    # Broadcast AI response
+                    await manager.broadcast(ai_response_data, chat_id)
                     
             except WebSocketDisconnect:
                 manager.disconnect(websocket, chat_id)
@@ -296,3 +373,28 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str):
             
     except Exception as e:
         await websocket.close(code=1008, reason=str(e)) 
+
+# New model for query requests
+class QueryRequest(BaseModel):
+    query: str
+    
+@router.post("/query", response_model=QueryResponse)
+async def process_chat_query(
+    query_request: QueryRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Process a direct query and return response with visualizations"""
+    
+    # Process the query
+    result = process_query(query_request.query, user_id=str(current_user.id))
+    
+    # Return the structured response
+    return QueryResponse(
+        status=result.get("status", "success"),
+        query=result.get("query", query_request.query),
+        response=result.get("response", ""),
+        metadata=result.get("metadata", {}),
+        graphs=result.get("graphs", []),
+        tables=result.get("tables", [])
+    ) 

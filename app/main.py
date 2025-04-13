@@ -7,12 +7,20 @@ from dotenv import load_dotenv
 from .database.database import engine, Base
 from .models import models
 from .routers import auth, workspace, chat, upload, reports
+from .db_migrations import run_migrations
 
 # Load environment variables
 load_dotenv()
 
+# Run database migrations
+run_migrations()
+
 # Create database tables if they don't exist
 models.Base.metadata.create_all(bind=engine)
+
+# Create data directories
+DATA_DIR = os.getenv("DATA_DIR", "./data")
+os.makedirs(os.path.join(DATA_DIR, "embeddings"), exist_ok=True)
 
 # Initialize FastAPI app
 app = FastAPI(

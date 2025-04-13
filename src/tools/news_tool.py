@@ -2,11 +2,10 @@
 #8d4f34c9addb4a809c5ed5d49ea810f4
 from langchain.agents import Tool
 import requests
-from prompts import NEWS_TOOL_DESCRIPTION
-import logger
+from src.prompts import NEWS_TOOL_DESCRIPTION
+from src.logger import info, warning, error
 
 def get_news_from_newsapi(query):
-    logger.info(f"Getting news for query: {query}")
     api_key = "8d4f34c9addb4a809c5ed5d49ea810f4"  # Replace with your NewsAPI key
     url = "https://newsapi.org/v2/everything"
     params = {
@@ -26,7 +25,6 @@ def get_news_from_newsapi(query):
 
         articles = data.get('articles', [])
         if not articles:
-            logger.warning(f"No news articles found for query: {query}")
             return "No articles found."
 
         result = ""
@@ -38,19 +36,13 @@ def get_news_from_newsapi(query):
             result += f"Description: {article.get('description')}\n"
             result += f"URL: {article.get('url')}\n"
         
-        logger.info(f"Successfully retrieved {len(articles)} news articles for {query}")
-        logger.log_tool_call("News Tool", query, result)
         return result
 
     except requests.exceptions.RequestException as e:
         error_msg = f"Request failed: {e}"
-        logger.error(f"Error getting news for {query}: {str(e)}")
-        logger.log_tool_call("News Tool", query, error=error_msg)
         return error_msg
     except Exception as e:
         error_msg = f"An unexpected error occurred: {e}"
-        logger.error(f"Unexpected error getting news for {query}: {str(e)}")
-        logger.log_tool_call("News Tool", query, error=error_msg)
         return error_msg
 
 

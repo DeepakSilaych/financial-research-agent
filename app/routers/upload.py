@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -10,6 +10,7 @@ from ..database.database import get_db
 from ..models.models import User, Upload, Workspace
 from ..schemas.schemas import UploadResponse
 from ..auth.auth import get_current_active_user
+from .parser import process_upload
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -24,8 +25,16 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+async def process_file_in_background(file_path: str):
+    """Background task to process the file with the parser."""
+    try:
+        await process_upload(file_path)
+    except Exception as e:
+        print(f"Error processing file in background: {e}")
+
 @router.post("/", response_model=UploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     description: Optional[str] = Form(None),
     workspace_id: Optional[int] = Form(None),
@@ -84,6 +93,12 @@ async def upload_file(
     db.add(db_upload)
     db.commit()
     db.refresh(db_upload)
+    
+    # Trigger background processing for PDF files
+    if file.filename.lower().endswith('.pdf'):
+        relative_file_path = str(relative_path / unique_filename)
+        background_tasks.add_task(process_file_in_background, relative_file_path)
+        print(f"👉 Started background processing of {file.filename}")
     
     return db_upload
 

@@ -4,8 +4,9 @@ import os
 import json
 from datetime import datetime, timedelta
 from langchain.agents import Tool
-from prompts import COMPANY_ANALYZER_TOOL_DESCRIPTION
-import logger
+from src.prompts import COMPANY_ANALYZER_TOOL_DESCRIPTION
+from src.logger import info, warning, error
+
 
 def analyze_company(symbol, api_key=None):
     """
@@ -18,9 +19,9 @@ def analyze_company(symbol, api_key=None):
     Returns:
         Comprehensive company data as formatted text
     """
-    logger.info(f"Analyzing company data for: {symbol}")
+    info(f"Analyzing company data for: {symbol}")
     
-    api_key = api_key or os.environ.get("ALPHA_VANTAGE_API_KEY") or "BAY8O6B5GY36HMB2"
+    api_key = api_key or os.environ.get("ALPHA_VANTAGE_API_KEY") or "FZ1EGW6DY7BS7CA1"
     base_url = "https://www.alphavantage.co/query"
     result_text = f"COMPREHENSIVE ANALYSIS FOR: {symbol}\n{'=' * 50}\n\n"
     
@@ -56,7 +57,7 @@ def analyze_company(symbol, api_key=None):
                 params.update(data_point["params"])
                 
             # Make API request
-            logger.debug(f"Making request for {data_point['function']} data for {symbol}")
+            info(f"Making request for {data_point['function']} data for {symbol}")
             response = requests.get(base_url, params=params)
             data = response.json()
             
@@ -65,7 +66,7 @@ def analyze_company(symbol, api_key=None):
             
             # Check for errors
             if "Error Message" in data:
-                logger.warning(f"Error in {data_point['function']} data for {symbol}: {data['Error Message']}")
+                warning(f"Error in {data_point['function']} data for {symbol}: {data['Error Message']}")
                 result_text += f"\n{data_point['title']}\n{'-' * 30}\n"
                 result_text += f"Error: {data['Error Message']}\n"
                 continue
@@ -282,7 +283,7 @@ def analyze_company(symbol, api_key=None):
                 result_text += json.dumps(data, indent=2) + "\n"
                 
         except Exception as e:
-            logger.error(f"Error retrieving {data_point['function']} for {symbol}: {str(e)}")
+            error(f"Error retrieving {data_point['function']} for {symbol}: {str(e)}")
             result_text += f"Error retrieving {data_point['function']}: {str(e)}\n"
     
     # Calculate and add financial ratios section
@@ -481,7 +482,7 @@ def analyze_company(symbol, api_key=None):
             pass
     
     except Exception as e:
-        logger.error(f"Error calculating financial ratios for {symbol}: {str(e)}")
+        error(f"Error calculating financial ratios for {symbol}: {str(e)}")
         result_text += f"Error calculating financial ratios: {str(e)}\n"
     
     # Add an analysis summary at the end
@@ -490,7 +491,7 @@ def analyze_company(symbol, api_key=None):
     result_text += f"{'=' * 50}\n"
     result_text += "Generated on: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n"
     
-    logger.info(f"Completed company analysis for {symbol}")
+    info(f"Completed company analysis for {symbol}")
     logger.log_tool_call("Company Analyzer", symbol, f"Analysis for {symbol} completed successfully")
     
     return result_text

@@ -1,6 +1,9 @@
 from pydantic import BaseModel, EmailStr, Field, validator
-from typing import List, Optional, Dict, Union
+from typing import List, Optional, Dict, Union, Any
 from datetime import datetime
+
+# Add the imports for visualization models
+from typing import List, Dict, Any, Optional, Union, Literal
 
 # User schemas
 class UserBase(BaseModel):
@@ -95,6 +98,27 @@ class MessageResponse(MessageBase):
     class Config:
         from_attributes = True
 
+# Visualization schemas
+class TableModel(BaseModel):
+    title: str
+    description: Optional[str] = None
+    data: List[List[Any]]  # First row is headers, subsequent rows are data
+
+class GraphDataset(BaseModel):
+    label: str
+    data: List[Union[int, float, str]]
+    borderColor: Optional[str] = None
+    backgroundColor: Optional[str] = None
+
+class GraphModel(BaseModel):
+    type: Literal["line", "bar", "pie", "scatter", "area", "radar", "mixed"]
+    title: str
+    description: Optional[str] = None
+    labels: List[str]
+    datasets: List[GraphDataset]
+    xAxis: Optional[str] = None
+    yAxis: Optional[str] = None
+
 # Report schemas
 class ReportBase(BaseModel):
     title: str
@@ -103,9 +127,11 @@ class ReportBase(BaseModel):
     report_type: str
     status: str = "Draft"
     pages: int = 0
+    workspace_id: Optional[int] = None
 
 class ReportCreate(ReportBase):
-    pass
+    tables: Optional[List[TableModel]] = []
+    graphs: Optional[List[GraphModel]] = []
 
 class ReportUpdate(BaseModel):
     title: Optional[str] = None
@@ -114,12 +140,16 @@ class ReportUpdate(BaseModel):
     report_type: Optional[str] = None
     status: Optional[str] = None
     pages: Optional[int] = None
+    tables: Optional[List[TableModel]] = None
+    graphs: Optional[List[GraphModel]] = None
 
 class ReportResponse(ReportBase):
     id: int
     user_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    tables: List[TableModel] = []
+    graphs: List[GraphModel] = []
 
     class Config:
         from_attributes = True
@@ -141,4 +171,12 @@ class UploadResponse(BaseModel):
 # WebSocket message schemas
 class WebSocketMessage(BaseModel):
     type: str
-    data: Dict[str, Union[str, int, bool, dict]] 
+    data: Dict[str, Union[str, int, bool, dict]]
+
+class QueryResponse(BaseModel):
+    status: str
+    query: str
+    response: str
+    metadata: Optional[Dict[str, Any]] = None
+    graphs: List[GraphModel] = []
+    tables: List[TableModel] = [] 

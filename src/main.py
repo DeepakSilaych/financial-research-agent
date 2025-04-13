@@ -1,12 +1,13 @@
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
-from prompts import SAFETY_CHECKER_PROMPT, METADATA_AND_QUERY_ENRICHMENT_PROMPT
-from logger import info, warning, error
+from src.prompts import SAFETY_CHECKER_PROMPT
+from src.logger import info, warning, error
 from datetime import datetime
-import flow
+import src.flow as flow
 import json
 import re
+from src.visualization_extractor import extract_visualizations
 
 # Load environment variables from .env file
 load_dotenv()
@@ -53,61 +54,22 @@ def check_query_safety(user_input, user_id="anonymous"):
             "refined_query": user_input
         }
 
-def validate_and_extract_metadata(user_query, user_id="anonymous"):
-    """
-    Extract metadata from a user query
-    
-    Returns:
-        dict: A dictionary containing:
-            - metadata: JSON metadata as a Python dict
-            - expanded_query: Markdown expanded query as a string
-    """
-    info(f"Extracting metadata for query: '{user_query}'")
-    
-    try:
-        response = client.responses.create(
-            model="gpt-4-turbo",
-            instructions=METADATA_AND_QUERY_ENRICHMENT_PROMPT,
-            input= user_query
-        )
-
-        output = response.output[0].content[0].text
-        info(f"Raw extracted output: {output}")
-        
-        # Extract JSON part (from PART 1: METADATA EXTRACTION)
-        json_match = re.search(r'```json\s*(.*?)\s*```', output, re.DOTALL)
-        metadata = {}
-        if json_match:
-            try:
-                metadata = json.loads(json_match.group(1))
-                info(f"Parsed metadata: {metadata}")
-            except json.JSONDecodeError as e:
-                error(f"Error parsing JSON metadata: {str(e)}")
-        
-        # Extract the expanded query (from PART 2: QUERY EXPANSION)
-        expanded_query = ""
-        if "PART 2: QUERY EXPANSION" in output:
-            expanded_query = output.split("PART 2: QUERY EXPANSION", 1)[1].strip()
-            info(f"Extracted expanded query of length: {len(expanded_query)}")
-        
-        return {
-            "metadata": metadata,
-            "expanded_query": expanded_query
-        }
-    except Exception as e:
-        error(f"Error extracting metadata: {str(e)}")
-        return {
-            "metadata": {},
-            "expanded_query": ""
-        }
-
-def process_query(user_input, user_id=None):
+def process_query(user_input, user_id=None, visualization_options=None):
     """Process a user query through the complete workflow"""
     # Generate a unique session ID if not provided
     if not user_id:
         user_id = f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
     
     info(f"Processing query for session {user_id}: '{user_input}'")
+    
+    # Process visualization options
+    if visualization_options is None:
+        visualization_options = {
+            "include_tables": True,
+            "include_graphs": True,
+            "max_tables": 5,
+            "max_graphs": 3
+        }
     
     # 1. Check if query is safe
     safety_result = check_query_safety(user_input, user_id)
@@ -117,39 +79,73 @@ def process_query(user_input, user_id=None):
         return {
             "status": "rejected",
             "reason": "Query contains harmful content",
-            "response": None
+            "response": None,
+            "graphs": [],
+            "tables": []
         }
     
-    # 2. Extract metadata
-    metadata_result = validate_and_extract_metadata(user_input, user_id)
-    
-    # Use the expanded query if available, otherwise use the refined query
-    query_for_agent = metadata_result["expanded_query"] if metadata_result["expanded_query"] else user_input
-    info(f"Using query for agent: '{query_for_agent[:100]}...'")
-    
-    # 3. Process through enhanced agent workflow with the improved arguments
+    # 2. Process through agent workflow using the original query directly
     agent_response = flow.run_agent_loop(
         flow.agent, 
-        query=query_for_agent,
+        query=user_input,
         original_query=user_input,
-        metadata=metadata_result["metadata"],
+        metadata={},
         max_retries=5, 
         user_id=user_id
     )
     
-    return {
-        "status": "success",
-        "metadata": metadata_result["metadata"],
-        "expanded_query": query_for_agent,
-        "response": agent_response
-    }
+    # If we have the complete dict response with visualization data, use it
+    if isinstance(agent_response, dict):
+        result = {
+            "status": "success",
+            "query": user_input,
+            "response": agent_response.get("response", ""),
+            "metadata": agent_response.get("metadata", {}),
+            "graphs": agent_response.get("graphs", []),
+            "tables": agent_response.get("tables", [])
+        }
+    else:
+        # For backwards compatibility when agent_response is just a string
+        result = {
+            "status": "success",
+            "query": user_input,
+            "response": agent_response if isinstance(agent_response, str) else str(agent_response),
+            "metadata": {},
+            "graphs": [],
+            "tables": []
+        }
+    
+    # Extract tables and graphs if needed
+    include_tables = visualization_options.get("include_tables", True)
+    include_graphs = visualization_options.get("include_graphs", True)
+    max_tables = visualization_options.get("max_tables", 5)
+    max_graphs = visualization_options.get("max_graphs", 3)
+    
+    if (include_tables or include_graphs) and (not result["graphs"] or not result["tables"]):
+        try:
+            info(f"Extracting visualizations for query: '{user_input[:100]}...'")
+            visualizations = extract_visualizations(
+                result["response"], 
+                user_input,
+                max_tables=max_tables,
+                max_graphs=max_graphs
+            )
+            
+            if include_tables and not result["tables"]:
+                result["tables"] = visualizations.get("tables", [])
+                
+            if include_graphs and not result["graphs"]:
+                result["graphs"] = visualizations.get("graphs", [])
+        except Exception as e:
+            error(f"Error extracting visualizations: {e}")
+    
+    return result
 
 # Example usage
 if __name__ == "__main__":
-    query = "Give me matrix for tesla stocks"
+    query = "What are the major trends in the semiconductor industry in 2023? Focus on NVIDIA, AMD, and Intel."
     result = process_query(query)
 
-
     info("=================================Result ==================================")
-    info(result["response"])
+    info(result)
     info("==========================================================================")

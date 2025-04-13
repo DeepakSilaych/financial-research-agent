@@ -45,6 +45,7 @@ class Workspace(Base):
     owner = relationship("User", back_populates="owned_workspaces")
     members = relationship("User", secondary=workspace_users, back_populates="workspaces")
     chats = relationship("Chat", back_populates="workspace")
+    reports = relationship("Report", back_populates="workspace")
 
 class Chat(Base):
     __tablename__ = "chats"
@@ -86,11 +87,14 @@ class Report(Base):
     status = Column(String, default="Draft")
     pages = Column(Integer, default=0)
     user_id = Column(Integer, ForeignKey("users.id"))
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
+    visualizations = Column(Text, nullable=True)  # Stores JSON string with tables and graphs
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
     user = relationship("User", back_populates="reports")
+    workspace = relationship("Workspace", back_populates="reports")
 
 class Upload(Base):
     __tablename__ = "uploads"
